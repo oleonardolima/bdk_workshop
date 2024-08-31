@@ -66,15 +66,43 @@ fn main() {
         wallet.balance().total().to_btc()
     );
 
-    full_scan_sync(&mut wallet);
+    perform_full_scan(&mut wallet);
 
     println!(
         "WALLET BALANCE (AFTER FULL SCAN): {}",
         wallet.balance().total().to_btc()
     );
+
+    println!(
+        "WALLET BALANCE (BEFORE PARTIAL SYNC): {}",
+        wallet.balance().total().to_btc()
+    );
+
+    perform_sync(&mut wallet);
+
+    println!(
+        "WALLET BALANCE (AFTER PARTIAL SYNC): {}",
+        wallet.balance().total().to_btc()
+    );
 }
 
-fn full_scan_sync(wallet: &mut Wallet) {
+fn perform_sync(wallet: &mut Wallet) {
+    let blocking_client = esplora_client::Builder::new(ESPLORA_URL).build_blocking();
+
+    let request = wallet.start_sync_with_revealed_spks();
+    let mut update = blocking_client.sync(request, PARALLEL_REQUESTS)
+        .expect("Failed to perform full scan");
+
+    let now = UNIX_EPOCH
+        .elapsed()
+        .expect("Failed to get current time")
+        .as_secs();
+
+    let _changeset = update.graph_update.update_last_seen_unconfirmed(now);
+    wallet.apply_update(update).expect("Failed to apply update");
+}
+
+fn perform_full_scan(wallet: &mut Wallet) {
     let blocking_client = esplora_client::Builder::new(ESPLORA_URL).build_blocking();
 
     let request = wallet.start_full_scan();
