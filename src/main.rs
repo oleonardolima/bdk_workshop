@@ -25,7 +25,7 @@ const ESPLORA_URL: &str = "http://mutinynet.com/api";
 const STOP_GAP: usize = 5;
 const PARALLEL_REQUESTS: usize = 5;
 
-const DB_PATH: &str = "database.db3";
+const DB_PATH: &str = "database";
 
 fn main() {
     let (external_descriptor, internal_descriptor) =
@@ -46,10 +46,11 @@ fn main() {
     // Start a new database connection with the given SQLITE DB file
     let mut db = Connection::open(DB_PATH).unwrap();
 
-    // Create BDK Wallet from both (receive) external descriptor and (change) internal descriptor
-    let mut wallet: Persisted<Wallet> = Wallet::create(external_descriptor, internal_descriptor)
-        .network(NETWORK)
-        .create_wallet(&mut db)
+    // Load wallet for given descriptors and the current database state
+    let mut wallet = Wallet::load()
+        .descriptors(external_descriptor, internal_descriptor)
+        .load_wallet(&mut db)
+        .unwrap()
         .unwrap();
 
     // Reveal an address from (receive) external keychain
