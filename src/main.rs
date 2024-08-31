@@ -10,6 +10,8 @@ use bdk_wallet::{
         key::rand::{self, RngCore},
         Network,
     },
+    chain::Persisted,
+    rusqlite::Connection,
     template::{Bip86, DescriptorTemplate},
     AddressInfo, KeychainKind, Wallet,
 };
@@ -22,6 +24,8 @@ const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPf6KHfH1XnfAiNnVMszztDXmCwj
 const ESPLORA_URL: &str = "http://mutinynet.com/api";
 const STOP_GAP: usize = 5;
 const PARALLEL_REQUESTS: usize = 5;
+
+const DB_PATH: &str = "database.db3";
 
 fn main() {
     let (external_descriptor, internal_descriptor) =
@@ -39,17 +43,22 @@ fn main() {
             )
         };
 
+    // Start a new database connection with the given SQLITE DB file
+    let mut db = Connection::open(DB_PATH).unwrap();
+
     // Create BDK Wallet from both (receive) external descriptor and (change) internal descriptor
-    let mut wallet: Wallet = Wallet::create(external_descriptor, internal_descriptor)
+    let mut wallet: Persisted<Wallet> = Wallet::create(external_descriptor, internal_descriptor)
         .network(NETWORK)
-        .create_wallet_no_persist()
+        .create_wallet(&mut db)
         .unwrap();
 
     // Reveal an address from (receive) external keychain
-    let receiving_address: AddressInfo = wallet.reveal_next_address(KeychainKind::External);
+    let receiving_address: AddressInfo = wallet.next_unused_address(KeychainKind::External);
+    wallet.persist(&mut db).unwrap();
 
     // Reveal an address from (change) internal keychain
-    let change_address: AddressInfo = wallet.reveal_next_address(KeychainKind::Internal);
+    let change_address: AddressInfo = wallet.next_unused_address(KeychainKind::Internal);
+    wallet.persist(&mut db).unwrap();
 
     println!(
         "REVEALED RECEIVE (EXTERNAL) ADDRESS {} @ INDEX {}",
@@ -66,7 +75,7 @@ fn main() {
         wallet.balance().total().to_btc()
     );
 
-    perform_full_scan(&mut wallet);
+    perform_full_scan(&mut wallet, &mut db);
 
     println!(
         "WALLET BALANCE (AFTER FULL SCAN): {}",
@@ -78,19 +87,23 @@ fn main() {
         wallet.balance().total().to_btc()
     );
 
-    perform_sync(&mut wallet);
+    perform_sync(&mut wallet, &mut db);
 
     println!(
         "WALLET BALANCE (AFTER PARTIAL SYNC): {}",
         wallet.balance().total().to_btc()
     );
+
+    // Closing the database connection
+    let _ = db.close();
 }
 
-fn perform_sync(wallet: &mut Wallet) {
+fn perform_sync(wallet: &mut Persisted<Wallet>, db: &mut Connection) {
     let blocking_client = esplora_client::Builder::new(ESPLORA_URL).build_blocking();
 
     let request = wallet.start_sync_with_revealed_spks();
-    let mut update = blocking_client.sync(request, PARALLEL_REQUESTS)
+    let mut update = blocking_client
+        .sync(request, PARALLEL_REQUESTS)
         .expect("Failed to perform full scan");
 
     let now = UNIX_EPOCH
@@ -100,9 +113,10 @@ fn perform_sync(wallet: &mut Wallet) {
 
     let _changeset = update.graph_update.update_last_seen_unconfirmed(now);
     wallet.apply_update(update).expect("Failed to apply update");
+    wallet.persist(db).unwrap();
 }
 
-fn perform_full_scan(wallet: &mut Wallet) {
+fn perform_full_scan(wallet: &mut Persisted<Wallet>, db: &mut Connection) {
     let blocking_client = esplora_client::Builder::new(ESPLORA_URL).build_blocking();
 
     let request = wallet.start_full_scan();
@@ -117,6 +131,7 @@ fn perform_full_scan(wallet: &mut Wallet) {
 
     let _changeset = update.graph_update.update_last_seen_unconfirmed(now);
     wallet.apply_update(update).expect("Failed to apply update");
+    wallet.persist(db).unwrap();
 }
 
 fn create_descriptors() -> (String, String) {
