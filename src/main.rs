@@ -1,3 +1,9 @@
+use std::time::UNIX_EPOCH;
+
+use bdk_esplora::{
+    esplora_client::{self},
+    EsploraExt,
+};
 use bdk_wallet::{
     bitcoin::{
         bip32::Xpriv,
@@ -10,8 +16,12 @@ use bdk_wallet::{
 
 const NETWORK: Network = Network::Signet;
 
-const EXTERNAL_DESCRIPTOR: &str = "";
-const INTERNAL_DESCRIPTOR: &str = "";
+const EXTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPf6KHfH1XnfAiNnVMszztDXmCwjXJeWMno3o7HLbP4TdFiduhZ5QxY6nxjZ4XHxr3tr1oxo3K917N5ETB3qvuJc6pW3P367p/86'/1'/0'/0/*)#tmhwtshy";
+const INTERNAL_DESCRIPTOR: &str = "tr(tprv8ZgxMBicQKsPf6KHfH1XnfAiNnVMszztDXmCwjXJeWMno3o7HLbP4TdFiduhZ5QxY6nxjZ4XHxr3tr1oxo3K917N5ETB3qvuJc6pW3P367p/86'/1'/0'/1/*)#60j0k98u";
+
+const ESPLORA_URL: &str = "http://mutinynet.com/api";
+const STOP_GAP: usize = 5;
+const PARALLEL_REQUESTS: usize = 5;
 
 fn main() {
     let (external_descriptor, internal_descriptor) =
@@ -50,6 +60,35 @@ fn main() {
         "REVEALED CHANGE (INTERNAL) ADDRESS {} @ INDEX {}",
         change_address.address, change_address.index
     );
+
+    println!(
+        "WALLET BALANCE (BEFORE FULL SCAN): {}",
+        wallet.balance().total().to_btc()
+    );
+
+    full_scan_sync(&mut wallet);
+
+    println!(
+        "WALLET BALANCE (AFTER FULL SCAN): {}",
+        wallet.balance().total().to_btc()
+    );
+}
+
+fn full_scan_sync(wallet: &mut Wallet) {
+    let blocking_client = esplora_client::Builder::new(ESPLORA_URL).build_blocking();
+
+    let request = wallet.start_full_scan();
+    let mut update = blocking_client
+        .full_scan(request, STOP_GAP, PARALLEL_REQUESTS)
+        .expect("Failed to perform full scan");
+
+    let now = UNIX_EPOCH
+        .elapsed()
+        .expect("Failed to get current time")
+        .as_secs();
+
+    let _changeset = update.graph_update.update_last_seen_unconfirmed(now);
+    wallet.apply_update(update).expect("Failed to apply update");
 }
 
 fn create_descriptors() -> (String, String) {
